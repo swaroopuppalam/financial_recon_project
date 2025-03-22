@@ -7,6 +7,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./ui:/ui
+      - ./ml:/ml
+      - shared-data:/shared
     restart: always
 
   ui:
@@ -15,4 +18,9 @@ services:
       - "8501:8501"
     depends_on:
       - backend
+    volumes:
+      - ./ui:/ui
+      - shared-data:/shared
     restart: always
+volumes:
+  shared-data:
