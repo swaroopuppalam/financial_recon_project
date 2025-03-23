@@ -22,10 +22,12 @@ print("🔄 Retraining Model from Feedback (Integrated Data Mode)...")
 FEEDBACK_PATH = "/ui/feedback.json"
 MODEL_PATH = "/app/model.pkl"
 TRAINING_LOGS = "/shared/training_logs.json"
-CONFIG_PATH = "/ml/config.json"  # ✅ NEW
+CONFIG_PATH = "/ml/config.json"
 CATALYST_PATH = "/ml/Catalyst_Reconciliation.csv"
 REALTIME_PATH = "/ml/real_time_transaction.csv"
 HISTORICAL_PATH = "/ml/historical_reconciliation.csv"
+FEATURE_IMPORTANCE_PATH = "/shared/feature_importance.json"
+YTEST_OUTPUT_PATH = "/shared/y_true_pred.json"
 
 # --------------------------
 # 🔹 Load model (if exists)
@@ -45,7 +47,7 @@ if os.path.exists(CONFIG_PATH):
         config = DEFAULT_CONFIG
         print("⚠️ Failed to load config. Using defaults.")
 else:
-    config = {"anomaly_rules": {"quantity_threshold": 1, "price_threshold": 0.01}}  # Default fallback
+    config = {"anomaly_rules": {"quantity_threshold": 1, "price_threshold": 0.01}}
     print("⚠️ Config file not found. Using defaults.")
 
 # --------------------------
@@ -69,20 +71,16 @@ catalyst_df = safe_read_csv(CATALYST_PATH)
 # --------------------------
 if not catalyst_df.empty:
     if "Anomaly" in catalyst_df.columns:
-        # ✅ Use existing Anomaly column if present
         catalyst_df["label"] = catalyst_df["Anomaly"].astype(int)
         print("✅ Using existing 'Anomaly' column as label.")
     else:
-        # 🔁 Fallback to config-based threshold logic
         threshold_qty = config["anomaly_rules"]["quantity_threshold"]
         threshold_price = config["anomaly_rules"]["price_threshold"]
-
         catalyst_df["label"] = (
             (catalyst_df["QUANTITYDIFFERENCE"].abs() > threshold_qty) |
             (catalyst_df["PRICEDIFFERENCE"].abs() > threshold_price)
         ).astype(int)
         print("⚠️ 'Anomaly' column not found. Derived using thresholds.")
-
 
 # --------------------------
 # 🔹 Derive anomaly from historical/real-time
@@ -181,6 +179,14 @@ print("📊 Model Performance After Incremental Learning:")
 y_pred = model.predict(X_test)
 print(classification_report(y_test, y_pred))
 
+# ✅ Save test results for ROC/AUC & Confusion Matrix in UI
+with open(YTEST_OUTPUT_PATH, "w") as f:
+    json.dump({
+        "y_test": y_test.tolist(),
+        "y_pred": y_pred.tolist()
+    }, f, indent=2)
+print("📉 Saved y_test and y_pred to /shared/y_true_pred.json")
+
 # --------------------------
 # 🔹 Save model
 # --------------------------
@@ -207,6 +213,13 @@ print("📜 Logged training results to", TRAINING_LOGS)
 
 # Save feature importance
 feature_importance = dict(zip(X_resampled.columns, model.feature_importances_))
-with open("/shared/feature_importance.json", "w") as f:
+with open(FEATURE_IMPORTANCE_PATH, "w") as f:
     json.dump(feature_importance, f, indent=2)
-print("📊 Saved feature importances to /shared/feature_importance.json")
+print(f"📊 Saved feature importances to {FEATURE_IMPORTANCE_PATH}")
+
+# --------------------------
+# 🔹 Save feature list for prediction consistency
+# --------------------------
+with open("/shared/feature_list.json", "w") as f:
+    json.dump(list(X_resampled.columns), f)
+print("🧾 Saved feature list to /shared/feature_list.json")

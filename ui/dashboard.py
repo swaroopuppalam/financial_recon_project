@@ -4,11 +4,13 @@ import json
 import pandas as pd
 import os
 import plotly.express as px
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_auc_score, roc_curve
 
 st.set_page_config(page_title="Anomaly Detection Dashboard", layout="wide")
 
 # --------------------------
-# Constants
+# Constants & Paths
 # --------------------------
 CONFIG_PATH = "/ml/config.json"
 FEATURE_IMPORTANCE_PATH = "/shared/feature_importance.json"
@@ -16,10 +18,14 @@ FEEDBACK_PATH = "/ui/feedback.json"
 TRAINING_LOGS_PATH = "/shared/training_logs.json"
 UPLOAD_ENDPOINT = "http://backend:8000/upload_dataset/"
 DETECT_ENDPOINT = "http://backend:8000/detect_anomaly/"
+TRIGGER_RETRAIN_ENDPOINT = "http://backend:8000/trigger_retrain/"
+MODEL_LIST_ENDPOINT = "http://backend:8000/list_models/"
+MODEL_SWITCH_ENDPOINT = "http://backend:8000/switch_model/"
+DATASET_DIR = "/ml"
 FEEDBACK_EXPORT_NAME = "feedback_export.csv"
 
 # --------------------------
-# Load helpers
+# Load JSON helpers
 # --------------------------
 def load_json(path, default=None):
     try:
@@ -30,10 +36,14 @@ def load_json(path, default=None):
         pass
     return default
 
+# --------------------------
+# Load config
+# --------------------------
 config = load_json(CONFIG_PATH, {"anomaly_rules": {"quantity_threshold": 1.0, "price_threshold": 0.01}})
 threshold_qty = config["anomaly_rules"].get("quantity_threshold", 1.0)
 threshold_price = config["anomaly_rules"].get("price_threshold", 0.01)
 
+# Label maps
 primary_account_options = {"ALL OTHER LOANS": 0}
 secondary_account_options = {"DEFERRED COSTS": 0, "DEFERRED ORIGINATION FEES": 1}
 currency_options = {"USD": 0}
@@ -43,7 +53,8 @@ currency_options = {"USD": 0}
 # --------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🔍 Predict Anomaly", "📤 Upload CSV", "📊 Feedback Dashboard",
-    "📈 Training Logs", "⚙️ Threshold Config", "🧠 Model Insights", "📥 Export Feedback", "🔬 Debug Prediction"
+    "📈 Training Logs", "⚙️ Threshold Config", "🧠 Model Insights",
+    "📥 Export Feedback", "🔬 Debug Prediction"
 ])
 
 # --------------------------
@@ -72,52 +83,67 @@ with tab1:
         "PRICEDIFFERENCE": price_diff
     }
 
+    # Initialize session state
     if "anomaly_result" not in st.session_state:
         st.session_state.anomaly_result = None
+
+    if "latest_payload" not in st.session_state:
+        st.session_state.latest_payload = {}
 
     if st.button("🚨 Detect"):
         try:
             response = requests.post(DETECT_ENDPOINT, json=payload)
             result = response.json()
-            st.session_state.anomaly_result = result
+            if "error" in result:
+                st.error(f"❌ Backend Error: {result['error']}")
+            elif "Anomaly" in result:
+                st.session_state.anomaly_result = result
+                st.session_state.latest_payload = payload
+            else:
+                st.warning("⚠️ No 'Anomaly' field in backend response.")
         except Exception as e:
-            st.error(f"API Error: {e}")
+            st.error(f"❌ Failed to reach backend: {e}")
 
-    if st.session_state.anomaly_result:
-        result = st.session_state.anomaly_result
-        if "Anomaly" in result:
-            label = "Yes" if result["Anomaly"] == 1 else "No"
-            st.success(f"🚨 Anomaly: {label}")
-            if "explanation" in result:
-                st.markdown("#### 🧾 Explanation")
-                for reason in result["explanation"]:
-                    st.markdown(f"- {reason}")
-            feedback = st.radio("Was this prediction correct?", ["Yes", "No"], key="feedback_radio")
-            if st.button("Submit Feedback"):
-                feedback_data = {
-                    "feedback": feedback,
-                    "input": payload,
-                    "prediction": int(result["Anomaly"])
-                }
-                if os.path.exists(FEEDBACK_PATH):
-                    with open(FEEDBACK_PATH, "r") as f:
-                        existing = json.load(f)
+    result = st.session_state.anomaly_result
+    if result and "Anomaly" in result:
+        st.success(f"🚨 Anomaly: {'Yes' if result['Anomaly'] else 'No'}")
+        if "explanation" in result:
+            st.markdown("### 🧾 Explanation")
+            for reason in result["explanation"]:
+                st.markdown(f"- {reason}")
+
+        st.markdown("### ✅ Was this prediction correct?")
+        feedback = st.radio("Feedback:", ["Yes", "No"], key="feedback_radio")
+        if st.button("📩 Submit Feedback"):
+            feedback_payload = {
+                "feedback": feedback,
+                "input": st.session_state.latest_payload,
+                "prediction": int(result["Anomaly"])
+            }
+            try:
+                res = requests.post("http://backend:8000/submit_feedback/", json=feedback_payload)
+                if res.status_code == 200:
+                    st.success("📝 Feedback submitted successfully.")
+                    st.session_state.anomaly_result = None
                 else:
-                    existing = []
-                existing.append(feedback_data)
-                with open(FEEDBACK_PATH, "w") as f:
-                    json.dump(existing, f, indent=2)
-                st.success("✅ Feedback recorded.")
-                st.session_state.anomaly_result = None
-        else:
-            st.error("❌ No valid response from backend.")
+                    st.error("❌ Feedback submission failed.")
+            except Exception as e:
+                st.error(f"❌ Error submitting feedback: {e}")
+
+    if st.button("♻️ Trigger Model Retraining"):
+        try:
+            response = requests.post(TRIGGER_RETRAIN_ENDPOINT)
+            st.success(response.json().get("message", "Retraining triggered"))
+        except Exception as e:
+            st.error(f"Retrain trigger failed: {e}")
 
 # --------------------------
 # 📤 TAB 2: Upload CSV
 # --------------------------
 with tab2:
-    st.title("📤 Upload Dataset for Retraining")
+    st.title("📤 Upload Dataset & Trigger Retrain")
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+
     if uploaded_file:
         try:
             response = requests.post(
@@ -125,9 +151,21 @@ with tab2:
                 files={"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")}
             )
             result = response.json()
-            st.success(result.get("message", "Uploaded successfully"))
+            st.success(result.get("message", "Uploaded successfully. Model will retrain."))
         except Exception as e:
             st.error(f"Upload failed: {e}")
+
+    st.subheader("📚 Uploaded Datasets")
+    if os.path.exists(DATASET_DIR):
+        files = [f for f in os.listdir(DATASET_DIR) if f.endswith(".csv")]
+        if files:
+            file = st.selectbox("📄 Select a dataset to view", files)
+            df = pd.read_csv(os.path.join(DATASET_DIR, file))
+            st.dataframe(df.head(50))
+        else:
+            st.info("No datasets found.")
+    else:
+        st.warning("/ml folder missing.")
 
 # --------------------------
 # 📊 TAB 3: Feedback Dashboard
@@ -146,6 +184,7 @@ with tab3:
             acc = (df["feedback"] == "Yes").mean() * 100
             st.metric("Prediction Accuracy", f"{acc:.2f}%")
             st.bar_chart(df["prediction"].value_counts())
+
         st.subheader("📉 Balance Difference vs Feedback")
         df["balance"] = df["input"].apply(lambda x: x.get("Balance Difference", 0.0))
         fig = px.histogram(df, x="balance", color="feedback", nbins=30)
@@ -163,42 +202,80 @@ with tab4:
         df_logs = pd.DataFrame(logs)
         df_logs["timestamp"] = pd.to_datetime(df_logs["timestamp"])
         df_logs = df_logs.sort_values("timestamp")
-        st.subheader("📊 Accuracy Over Time")
+
         st.line_chart(df_logs.set_index("timestamp")["accuracy"])
+
         metrics = ["precision_0", "recall_0", "precision_1", "recall_1"]
         if all(m in df_logs.columns for m in metrics):
             st.subheader("🔍 Precision & Recall")
             st.line_chart(df_logs.set_index("timestamp")[metrics])
-        st.subheader("📋 Recent Training Logs")
+
+        if "y_test" in df_logs.columns and "y_pred" in df_logs.columns:
+            y_test = df_logs.iloc[-1]["y_test"]
+            y_pred = df_logs.iloc[-1]["y_pred"]
+            cm = confusion_matrix(y_test, y_pred)
+            fig, ax = plt.subplots()
+            ConfusionMatrixDisplay(cm).plot(ax=ax)
+            st.pyplot(fig)
+
+            try:
+                auc = roc_auc_score(y_test, y_pred)
+                fpr, tpr, _ = roc_curve(y_test, y_pred)
+                st.subheader(f"🧪 ROC AUC: {auc:.2f}")
+                fig2, ax2 = plt.subplots()
+                ax2.plot(fpr, tpr)
+                ax2.set_title("ROC Curve")
+                ax2.set_xlabel("False Positive Rate")
+                ax2.set_ylabel("True Positive Rate")
+                st.pyplot(fig2)
+            except:
+                st.warning("Unable to compute ROC/AUC.")
+
         st.dataframe(df_logs.tail(10))
     else:
-        st.warning("Training logs not found.")
+        st.info("No training logs available.")
+    YTEST_OUTPUT_PATH = "/shared/y_true_pred.json"
+    ytp = load_json(YTEST_OUTPUT_PATH, {})
+    if ytp and "y_test" in ytp and "y_pred" in ytp:
+        st.subheader("📉 Confusion Matrix")
+        cm = confusion_matrix(ytp["y_test"], ytp["y_pred"])
+        fig, ax = plt.subplots()
+        ConfusionMatrixDisplay(cm).plot(ax=ax)
+        st.pyplot(fig)
+
+        try:
+            auc = roc_auc_score(ytp["y_test"], ytp["y_pred"])
+            fpr, tpr, _ = roc_curve(ytp["y_test"], ytp["y_pred"])
+            st.subheader(f"🧪 ROC AUC: {auc:.2f}")
+            fig2, ax2 = plt.subplots()
+            ax2.plot(fpr, tpr)
+            ax2.set_title("ROC Curve")
+            ax2.set_xlabel("False Positive Rate")
+            ax2.set_ylabel("True Positive Rate")
+            st.pyplot(fig2)
+        except Exception as e:
+            st.warning(f"⚠️ Unable to compute ROC/AUC: {e}")
 
 # --------------------------
 # ⚙️ TAB 5: Threshold Config
 # --------------------------
 with tab5:
-    st.title("⚙️ Update Anomaly Thresholds")
-    current_qty = float(threshold_qty)
-    current_price = float(threshold_price)
-    new_qty_thresh = st.number_input("📏 Quantity Difference Threshold", min_value=0.0, step=0.01, value=current_qty)
-    new_price_thresh = st.number_input("💰 Price Difference Threshold", min_value=0.0, step=0.01, value=current_price)
+    st.title("⚙️ Update Thresholds")
+    new_qty_thresh = st.number_input("📏 Quantity Threshold", min_value=0.0, step=0.01, value=float(threshold_qty))
+    new_price_thresh = st.number_input("💰 Price Threshold", min_value=0.0, step=0.01, value=float(threshold_price))
     if st.button("💾 Save Thresholds"):
-        new_config = {
-            "anomaly_rules": {
-                "quantity_threshold": new_qty_thresh,
-                "price_threshold": new_price_thresh
-            }
-        }
         try:
             with open(CONFIG_PATH, "w") as f:
-                json.dump(new_config, f, indent=2)
-            st.success("✅ Thresholds updated. Please retrain the model to reflect changes.")
+                json.dump({"anomaly_rules": {
+                    "quantity_threshold": new_qty_thresh,
+                    "price_threshold": new_price_thresh
+                }}, f, indent=2)
+            st.success("✅ Thresholds updated.")
         except Exception as e:
-            st.error(f"❌ Failed to save config: {e}")
+            st.error(f"❌ Failed to update: {e}")
 
 # --------------------------
-# 🧠 TAB 6: Model Insights
+# 🧠 TAB 6: Feature Importance
 # --------------------------
 with tab6:
     st.title("🧠 Feature Importance")
@@ -211,7 +288,7 @@ with tab6:
         st.bar_chart(df_feat.set_index("Feature"))
         st.dataframe(df_feat)
     else:
-        st.warning("Feature importance not available.")
+        st.warning("No feature importance available.")
 
 # --------------------------
 # 📥 TAB 7: Export Feedback
@@ -223,15 +300,13 @@ with tab7:
         df = pd.DataFrame(data)
         st.download_button("⬇️ Download Feedback CSV", df.to_csv(index=False), file_name=FEEDBACK_EXPORT_NAME)
     else:
-        st.warning("⚠️ No feedback available to export.")
+        st.warning("⚠️ No feedback available.")
 
 # --------------------------
 # 🔬 TAB 8: Debug Prediction
 # --------------------------
 with tab8:
     st.title("🔬 Debug Prediction Engine")
-    st.markdown("Upload or enter a row to inspect how the model reasons.")
-
     sample_input = {
         "Balance Difference": st.number_input("🔢 Balance Difference", value=0.0, key="debug_bd"),
         "Primary Account": primary_account_options[
@@ -252,8 +327,7 @@ with tab8:
             response = requests.post(DETECT_ENDPOINT, json=sample_input)
             result = response.json()
             if "Anomaly" in result:
-                label = "Yes" if result["Anomaly"] == 1 else "No"
-                st.success(f"🚨 Anomaly: {label}")
+                st.success(f"🚨 Anomaly: {'Yes' if result['Anomaly'] else 'No'}")
                 if "explanation" in result:
                     st.markdown("### 📋 Explanation")
                     for item in result["explanation"]:
@@ -262,4 +336,3 @@ with tab8:
                 st.warning(f"Backend error: {result}")
         except Exception as e:
             st.error(f"Debug error: {e}")
-
