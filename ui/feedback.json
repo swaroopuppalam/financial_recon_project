@@ -786,5 +786,243 @@
       "Currency": 0
     },
     "prediction": "No"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -20000.0,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "No"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 1.2,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 0.8,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "No"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -20000.0,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -0.99,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "No"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -20000.0,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "No",
+    "input": {
+      "Balance Difference": -0.99,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "No"
+  },
+  {
+    "feedback": "No",
+    "input": {
+      "Balance Difference": -0.99,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "No",
+    "input": {
+      "Balance Difference": -0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 1.1,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "Yes"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 0.99,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0
+    },
+    "prediction": "No"
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -20000.0,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 1
+  },
+  {
+    "feedback": "No",
+    "input": {
+      "Balance Difference": -0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 1
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 0
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 1.1,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 1
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 0.98,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 0
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -20000.0,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 1
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": -0.9,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 0
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 0.99,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 0
+  },
+  {
+    "feedback": "Yes",
+    "input": {
+      "Balance Difference": 1.1,
+      "Primary Account": 0,
+      "Secondary Account": 0,
+      "Currency": 0,
+      "QUANTITYDIFFERENCE": 0.0,
+      "PRICEDIFFERENCE": 0.0
+    },
+    "prediction": 1
   }
 ]
