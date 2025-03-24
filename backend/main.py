@@ -1,4 +1,3 @@
-# main.py
 from fastapi import FastAPI, UploadFile, File
 import joblib
 import pandas as pd
@@ -7,6 +6,7 @@ import json
 import threading
 import time
 from typing import Dict
+import traceback
 
 app = FastAPI()
 
@@ -25,18 +25,23 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # --------------------------
-# 🔹 Load the latest or default model
+# 🔹 Safe model loader
 # --------------------------
-def load_model(path=CURRENT_MODEL_PATH):
+def safe_load_model(path=CURRENT_MODEL_PATH):
     try:
-        model = joblib.load(path)
-        print(f"✅ Model loaded from: {path}")
-        return model
+        if os.path.exists(path) and os.path.getsize(path) > 1024:
+            model = joblib.load(path)
+            print(f"✅ Model loaded from: {path}")
+            return model
+        else:
+            print(f"⚠️ Model file is missing or too small: {path}")
+            return None
     except Exception as e:
-        print(f"⚠️ Failed to load model: {e}")
+        print(f"⚠️ Failed to load model from {path}: {e}")
+        traceback.print_exc()
         return None
 
-model = load_model()
+model = safe_load_model()
 
 # --------------------------
 # 🔹 Config Loader
@@ -46,10 +51,10 @@ def load_thresholds():
         try:
             with open(CONFIG_PATH) as f:
                 cfg = json.load(f)
-                return cfg.get("anomaly_rules", {"quantity_threshold": 1.0, "price_threshold": 0.01})
+                return cfg.get("anomaly_rules", {"quantity_threshold": 1.0, "price_threshold": 0.01, "balance_threshold": 1.0})
         except:
             pass
-    return {"quantity_threshold": 1.0, "price_threshold": 0.01}
+    return {"quantity_threshold": 1.0, "price_threshold": 0.01, "balance_threshold": 1.0}
 
 # --------------------------
 # 🔹 Prediction Endpoint
@@ -57,50 +62,67 @@ def load_thresholds():
 @app.post("/detect_anomaly/")
 def detect_anomaly(input_data: Dict[str, float]):
     print("✅ Payload:", input_data)
+    explanation = []
 
-    # Step 1: Load feature list used during training
     try:
         with open("/shared/feature_list.json", "r") as f:
             feature_list = json.load(f)
     except Exception as e:
         return {"error": f"❌ Feature list not found: {e}"}
 
-    # Step 2: Convert input to DataFrame
     df = pd.DataFrame([input_data])
-
-    # Step 3: Fill missing features with 0.0
     for col in feature_list:
         if col not in df.columns:
             df[col] = 0.0
-
-    # Step 4: Reorder columns to match training
     try:
         df = df[feature_list]
     except Exception as e:
         return {"error": f"❌ Failed to align input with trained feature order: {e}"}
 
-    # Step 5: Load thresholds
     thresholds = load_thresholds()
     bd = abs(df["Balance Difference"].iloc[0]) if "Balance Difference" in df.columns else 0
     qty = abs(df["QUANTITYDIFFERENCE"].iloc[0]) if "QUANTITYDIFFERENCE" in df.columns else 0
     price = abs(df["PRICEDIFFERENCE"].iloc[0]) if "PRICEDIFFERENCE" in df.columns else 0
 
-    explanation = []
+    if bd >= thresholds.get("balance_threshold", 1.0) or \
+       qty > thresholds["quantity_threshold"] or \
+       price > thresholds["price_threshold"]:
+        explanation.append("⚠️ Exceeds thresholds → flagged as anomaly")
+        return {"Anomaly": 1, "explanation": explanation}
 
-    if bd < 1 and qty <= thresholds["quantity_threshold"] and price <= thresholds["price_threshold"]:
-        explanation.append("🔎 All values below threshold → not anomalous")
-        return {"Anomaly": 0, "explanation": explanation}
-
-    # Step 6: Predict
     try:
         pred = model.predict(df)[0]
         explanation.append("🧠 Prediction based on ML model")
+
+        try:
+            with open("/shared/explanation_map.json") as f:
+                exp_map = json.load(f)
+            lookup_key = str(tuple(round(float(df.iloc[0][col]), 3) for col in df.columns if df[col].dtype != "O"))
+            reason = exp_map.get(lookup_key, "Unknown Reason")
+            explanation.append(f"🗂️ Reason Bucket: {reason}")
+
+            if pred == 1 and reason != "Unknown Reason":
+                from utils.agent_actions import create_ticket, send_email_alert, create_resolution_task
+                anomaly_id = lookup_key[-6:]
+                create_ticket(anomaly_id, reason)
+                send_email_alert(anomaly_id, reason)
+                create_resolution_task(anomaly_id, reason)
+                explanation.append("🤖 Agent actions triggered: email, ticket, task")
+
+            try:
+                from utils.root_cause_llm import suggest_root_cause
+                root_cause = suggest_root_cause(input_data)
+                explanation.append(f"💡 Suggested Root Cause: {root_cause}")
+            except Exception as e:
+                explanation.append("⚠️ Failed to generate root cause: " + str(e))
+
+        except Exception as e:
+            explanation.append("❌ Failed to fetch reason bucket")
+
         return {"Anomaly": int(pred), "explanation": explanation}
     except Exception as e:
         print(f"❌ Prediction error: {e}")
         return {"error": f"Prediction failed: {e}"}
-
-
 
 # --------------------------
 # 🔹 Submit Feedback
@@ -131,7 +153,7 @@ async def trigger_retrain():
 def retrain_model():
     os.system(f"python {RETRAIN_SCRIPT}")
     global model
-    model = load_model()
+    model = safe_load_model()
 
 # --------------------------
 # 🔹 Upload + Auto Retrain
@@ -162,7 +184,7 @@ def switch_model(model_name: str):
     model_path = os.path.join(MODEL_DIR, model_name)
     if not os.path.exists(model_path):
         return {"error": f"Model {model_name} not found"}
-    model = load_model(model_path)
+    model = safe_load_model(model_path)
     if os.path.exists(CURRENT_MODEL_PATH):
         os.remove(CURRENT_MODEL_PATH)
     os.symlink(model_path, CURRENT_MODEL_PATH)
@@ -188,3 +210,11 @@ def periodic_retrain():
         time.sleep(86400)
 
 threading.Thread(target=periodic_retrain, daemon=True).start()
+
+@app.get("/agent_logs/")
+def get_agent_logs():
+    log_path = "/shared/agent_log.json"
+    if os.path.exists(log_path):
+        with open(log_path) as f:
+            return {"logs": json.load(f)}
+    return {"logs": []}

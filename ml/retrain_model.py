@@ -11,8 +11,10 @@ from sklearn.metrics import (
     recall_score,
     accuracy_score
 )
-from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import resample
+from joblib import load
+import traceback
+from utils.preprocess import preprocess_dataset  # ✅ NEW import
 
 print("🔄 Retraining Model from Feedback (Integrated Data Mode)...")
 
@@ -23,31 +25,37 @@ FEEDBACK_PATH = "/ui/feedback.json"
 MODEL_PATH = "/app/model.pkl"
 TRAINING_LOGS = "/shared/training_logs.json"
 CONFIG_PATH = "/ml/config.json"
-CATALYST_PATH = "/ml/Catalyst_Reconciliation.csv"
-REALTIME_PATH = "/ml/real_time_transaction.csv"
-HISTORICAL_PATH = "/ml/historical_reconciliation.csv"
 FEATURE_IMPORTANCE_PATH = "/shared/feature_importance.json"
 YTEST_OUTPUT_PATH = "/shared/y_true_pred.json"
+DATA_DIR = "/ml"
 
 # --------------------------
 # 🔹 Load model (if exists)
 # --------------------------
-model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+def safe_load_model(path):
+    try:
+        return joblib.load(path)
+    except Exception as e:
+        print(f"⚠️ Failed to load model from {path}: {e}")
+        traceback.print_exc()
+        return None
+
+model = safe_load_model(MODEL_PATH)
 
 # --------------------------
-# 🔹 Load anomaly config (NEW)
+# 🔹 Load anomaly config
 # --------------------------
-DEFAULT_CONFIG = {"quantity_threshold": 1.0, "price_threshold": 0.01}
+DEFAULT_CONFIG = {"quantity_threshold": 1.0, "price_threshold": 0.01, "balance_threshold": 1.0}
 if os.path.exists(CONFIG_PATH):
     try:
         with open(CONFIG_PATH, "r") as f:
             config = json.load(f)
         print(f"🧪 Loaded anomaly thresholds: {config}")
     except:
-        config = DEFAULT_CONFIG
+        config = {"anomaly_rules": DEFAULT_CONFIG}
         print("⚠️ Failed to load config. Using defaults.")
 else:
-    config = {"anomaly_rules": {"quantity_threshold": 1, "price_threshold": 0.01}}
+    config = {"anomaly_rules": DEFAULT_CONFIG}
     print("⚠️ Config file not found. Using defaults.")
 
 # --------------------------
@@ -58,36 +66,22 @@ def safe_read_csv(path):
         df = pd.read_csv(path)
         df.columns = df.columns.str.strip()
         return df
-    except:
-        print(f"⚠️ Warning: Could not read {path}")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not read {path}: {e}")
         return pd.DataFrame()
 
-historical_df = safe_read_csv(HISTORICAL_PATH)
-real_time_df = safe_read_csv(REALTIME_PATH)
-catalyst_df = safe_read_csv(CATALYST_PATH)
-
 # --------------------------
-# 🔹 Derive anomaly from Catalyst
+# 🔹 Process all CSVs dynamically from /ml
 # --------------------------
-if not catalyst_df.empty:
-    if "Anomaly" in catalyst_df.columns:
-        catalyst_df["label"] = catalyst_df["Anomaly"].astype(int)
-        print("✅ Using existing 'Anomaly' column as label.")
-    else:
-        threshold_qty = config["anomaly_rules"]["quantity_threshold"]
-        threshold_price = config["anomaly_rules"]["price_threshold"]
-        catalyst_df["label"] = (
-            (catalyst_df["QUANTITYDIFFERENCE"].abs() > threshold_qty) |
-            (catalyst_df["PRICEDIFFERENCE"].abs() > threshold_price)
-        ).astype(int)
-        print("⚠️ 'Anomaly' column not found. Derived using thresholds.")
-
-# --------------------------
-# 🔹 Derive anomaly from historical/real-time
-# --------------------------
-for df in [historical_df, real_time_df]:
-    if not df.empty:
-        df["label"] = df["Balance Difference"].apply(lambda x: 1 if abs(x) > 1 else 0)
+dataframes = []
+for fname in os.listdir(DATA_DIR):
+    if fname.endswith(".csv"):
+        path = os.path.join(DATA_DIR, fname)
+        df_raw = safe_read_csv(path)
+        if not df_raw.empty:
+            processed = preprocess_dataset(df_raw, fname, config)
+            if not processed.empty:
+                dataframes.append(processed)
 
 # --------------------------
 # 🔹 Load & process feedback.json
@@ -98,44 +92,24 @@ if os.path.exists(FEEDBACK_PATH):
         df_fb = pd.DataFrame(feedback)
         fb_data = pd.json_normalize(df_fb["input"])
         fb_data["label"] = df_fb["feedback"].apply(lambda x: 1 if x == "Yes" else 0)
-    except:
-        fb_data = pd.DataFrame()
-else:
-    fb_data = pd.DataFrame()
+        # Only keep numeric columns from feedback
+        fb_data = fb_data.select_dtypes(include=["number"])
+        fb_data["label"] = fb_data["label"].astype(int)
+        if not fb_data.empty:
+            dataframes.append(fb_data)
+    except Exception as e:
+        print(f"⚠️ Feedback parse error: {e}")
 
 # --------------------------
-# 🔹 Select columns for training
+# 🔹 Merge data for training
 # --------------------------
-feature_cols = ["Balance Difference", "Primary Account", "Secondary Account", "Currency"]
-catalyst_cols = ["QUANTITYDIFFERENCE", "PRICEDIFFERENCE"]
-
-frames = []
-if not historical_df.empty:
-    frames.append(historical_df[feature_cols + ["label"]])
-if not real_time_df.empty:
-    frames.append(real_time_df[feature_cols + ["label"]])
-if not catalyst_df.empty:
-    frames.append(catalyst_df[catalyst_cols + ["label"]])
-if not fb_data.empty:
-    frames.append(fb_data[feature_cols + ["label"]])
-
-if not frames:
-    print("❌ No data found. Cannot train model.")
+if not dataframes:
+    print("❌ No valid data found. Cannot train model.")
     exit()
 
-# --------------------------
-# 🔹 Merge & encode data
-# --------------------------
-full_data = pd.concat(frames, ignore_index=True)
-
-# Encode categorical
-categorical_cols = ["Primary Account", "Secondary Account", "Currency"]
-le_map = {}
-for col in categorical_cols:
-    if col in full_data.columns:
-        le = LabelEncoder()
-        full_data[col] = le.fit_transform(full_data[col].astype(str))
-        le_map[col] = le
+full_data = pd.concat(dataframes, ignore_index=True)
+X = full_data.drop("label", axis=1).select_dtypes(include=["number"])
+y = full_data["label"]
 
 # --------------------------
 # 🔹 Balance data
@@ -146,11 +120,8 @@ if len(anomaly_df) < len(normal_df):
     anomaly_df = resample(anomaly_df, replace=True, n_samples=len(normal_df), random_state=42)
 
 train_data = pd.concat([normal_df, anomaly_df]).sample(frac=1, random_state=42).reset_index(drop=True)
-X_resampled = train_data.drop("label", axis=1)
+X_resampled = train_data.drop("label", axis=1).select_dtypes(include=["number"])
 y_resampled = train_data["label"]
-
-# Drop non-numeric
-X_resampled = X_resampled.select_dtypes(include=["number"])
 
 # --------------------------
 # 🔹 Train/test split & training
@@ -175,7 +146,7 @@ else:
 # --------------------------
 # 🔹 Evaluation
 # --------------------------
-print("📊 Model Performance After Incremental Learning:")
+print("📊 Model Performance After Retraining:")
 y_pred = model.predict(X_test)
 print(classification_report(y_test, y_pred))
 
@@ -191,10 +162,10 @@ print("📉 Saved y_test and y_pred to /shared/y_true_pred.json")
 # 🔹 Save model
 # --------------------------
 joblib.dump(model, MODEL_PATH)
-print("✅ Model retrained and saved.")
+print("✅ Model retrained and saved to", MODEL_PATH)
 
 # --------------------------
-# 🔹 Save logs
+# 🔹 Save training logs
 # --------------------------
 entry = {
     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -208,10 +179,11 @@ logs = json.load(open(TRAINING_LOGS, "r")) if os.path.exists(TRAINING_LOGS) else
 logs.append(entry)
 with open(TRAINING_LOGS, "w") as f:
     json.dump(logs, f, indent=2)
-
 print("📜 Logged training results to", TRAINING_LOGS)
 
-# Save feature importance
+# --------------------------
+# 🔹 Save feature importance
+# --------------------------
 feature_importance = dict(zip(X_resampled.columns, model.feature_importances_))
 with open(FEATURE_IMPORTANCE_PATH, "w") as f:
     json.dump(feature_importance, f, indent=2)
@@ -223,3 +195,13 @@ print(f"📊 Saved feature importances to {FEATURE_IMPORTANCE_PATH}")
 with open("/shared/feature_list.json", "w") as f:
     json.dump(list(X_resampled.columns), f)
 print("🧾 Saved feature list to /shared/feature_list.json")
+
+# --------------------------
+# 🔹 Generate explanation map from training data
+# --------------------------
+try:
+    from utils.reasoning_llm import generate_reasoning_map
+    training_rows = full_data.to_dict(orient="records")
+    generate_reasoning_map(training_rows)
+except Exception as e:
+    print("⚠️ Failed to generate explanation map:", e)

@@ -16,11 +16,13 @@ CONFIG_PATH = "/ml/config.json"
 FEATURE_IMPORTANCE_PATH = "/shared/feature_importance.json"
 FEEDBACK_PATH = "/ui/feedback.json"
 TRAINING_LOGS_PATH = "/shared/training_logs.json"
+AGENT_LOG_PATH = "/shared/agent_log.json"
 UPLOAD_ENDPOINT = "http://backend:8000/upload_dataset/"
 DETECT_ENDPOINT = "http://backend:8000/detect_anomaly/"
 TRIGGER_RETRAIN_ENDPOINT = "http://backend:8000/trigger_retrain/"
 MODEL_LIST_ENDPOINT = "http://backend:8000/list_models/"
 MODEL_SWITCH_ENDPOINT = "http://backend:8000/switch_model/"
+AGENT_LOGS_ENDPOINT = "http://backend:8000/agent_logs/"
 DATASET_DIR = "/ml"
 FEEDBACK_EXPORT_NAME = "feedback_export.csv"
 
@@ -51,10 +53,10 @@ currency_options = {"USD": 0}
 # --------------------------
 # Tabs
 # --------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🔍 Predict Anomaly", "📤 Upload CSV", "📊 Feedback Dashboard",
     "📈 Training Logs", "⚙️ Threshold Config", "🧠 Model Insights",
-    "📥 Export Feedback", "🔬 Debug Prediction"
+    "📥 Export Feedback", "🔬 Debug Prediction", "🤖 Agent Actions"
 ])
 
 # --------------------------
@@ -336,3 +338,48 @@ with tab8:
                 st.warning(f"Backend error: {result}")
         except Exception as e:
             st.error(f"Debug error: {e}")
+
+# --------------------------
+# 🤖 TAB 9: Agent Actions
+# --------------------------
+with tab9:
+    st.title("🤖 Agent Actions & Logs")
+
+    # Load agent logs
+    try:
+        res = requests.get(AGENT_LOGS_ENDPOINT)
+        logs = res.json().get("logs", [])
+        if logs:
+            df = pd.DataFrame(logs)
+            st.dataframe(df[::-1])
+        else:
+            st.info("No agent actions recorded yet.")
+    except Exception as e:
+        st.error(f"Failed to load agent logs: {e}")
+
+    st.divider()
+    st.subheader("🛠️ Manually Trigger Agent Action")
+    anomaly_id = st.text_input("🔢 Anomaly ID", value="123456")
+    reason = st.selectbox("📂 Reason Bucket", [
+        "Price Mismatch", "Quantity Mismatch", "Timing Issue",
+        "GL vs IHub Difference", "Unknown Reason"
+    ])
+    if st.button("🚀 Trigger Actions Manually"):
+        try:
+            payload = {
+                "anomaly_id": anomaly_id,
+                "reason": reason
+            }
+            existing_logs = load_json(AGENT_LOG_PATH, [])
+            task_time = strftime("%Y-%m-%d %H:%M:%S")
+            new_tasks = [
+                {"action": "Create JIRA Ticket", "reason": reason, "anomaly_id": anomaly_id, "status": "submitted", "timestamp": task_time},
+                {"action": "Send Email Alert", "reason": reason, "anomaly_id": anomaly_id, "status": "sent", "timestamp": task_time},
+                {"action": "Create Resolution Task", "reason": reason, "anomaly_id": anomaly_id, "status": "queued", "timestamp": task_time}
+            ]
+            updated = existing_logs + new_tasks
+            with open(AGENT_LOG_PATH, "w") as f:
+                json.dump(updated, f, indent=2)
+            st.success("✅ Agent actions triggered and logged.")
+        except Exception as e:
+            st.error(f"Failed to trigger actions: {e}")
