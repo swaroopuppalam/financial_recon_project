@@ -109,13 +109,6 @@ def detect_anomaly(input_data: Dict[str, float]):
                 create_resolution_task(anomaly_id, reason)
                 explanation.append("🤖 Agent actions triggered: email, ticket, task")
 
-            try:
-                from utils.root_cause_llm import suggest_root_cause
-                root_cause = suggest_root_cause(input_data)
-                explanation.append(f"💡 Suggested Root Cause: {root_cause}")
-            except Exception as e:
-                explanation.append("⚠️ Failed to generate root cause: " + str(e))
-
         except Exception as e:
             explanation.append("❌ Failed to fetch reason bucket")
 

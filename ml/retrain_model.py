@@ -27,6 +27,7 @@ TRAINING_LOGS = "/shared/training_logs.json"
 CONFIG_PATH = "/ml/config.json"
 FEATURE_IMPORTANCE_PATH = "/shared/feature_importance.json"
 YTEST_OUTPUT_PATH = "/shared/y_true_pred.json"
+EXPLANATION_MAP_PATH = "/shared/explanation_map.json"
 DATA_DIR = "/ml"
 
 # --------------------------
@@ -74,6 +75,7 @@ def safe_read_csv(path):
 # 🔹 Process all CSVs dynamically from /ml
 # --------------------------
 dataframes = []
+raw_anomalies = []  # ✅ NEW for explanation map
 for fname in os.listdir(DATA_DIR):
     if fname.endswith(".csv"):
         path = os.path.join(DATA_DIR, fname)
@@ -82,6 +84,10 @@ for fname in os.listdir(DATA_DIR):
             processed = preprocess_dataset(df_raw, fname, config)
             if not processed.empty:
                 dataframes.append(processed)
+                if "label" in df_raw.columns and "COMMENT" in df_raw.columns:
+                    raw_anomalies.extend(
+                        df_raw[df_raw["label"] == 1].to_dict(orient="records")
+                    )
 
 # --------------------------
 # 🔹 Load & process feedback.json
@@ -92,7 +98,6 @@ if os.path.exists(FEEDBACK_PATH):
         df_fb = pd.DataFrame(feedback)
         fb_data = pd.json_normalize(df_fb["input"])
         fb_data["label"] = df_fb["feedback"].apply(lambda x: 1 if x == "Yes" else 0)
-        # Only keep numeric columns from feedback
         fb_data = fb_data.select_dtypes(include=["number"])
         fb_data["label"] = fb_data["label"].astype(int)
         if not fb_data.empty:
@@ -150,12 +155,8 @@ print("📊 Model Performance After Retraining:")
 y_pred = model.predict(X_test)
 print(classification_report(y_test, y_pred))
 
-# ✅ Save test results for ROC/AUC & Confusion Matrix in UI
 with open(YTEST_OUTPUT_PATH, "w") as f:
-    json.dump({
-        "y_test": y_test.tolist(),
-        "y_pred": y_pred.tolist()
-    }, f, indent=2)
+    json.dump({"y_test": y_test.tolist(), "y_pred": y_pred.tolist()}, f, indent=2)
 print("📉 Saved y_test and y_pred to /shared/y_true_pred.json")
 
 # --------------------------
@@ -190,18 +191,23 @@ with open(FEATURE_IMPORTANCE_PATH, "w") as f:
 print(f"📊 Saved feature importances to {FEATURE_IMPORTANCE_PATH}")
 
 # --------------------------
-# 🔹 Save feature list for prediction consistency
+# 🔹 Save feature list
 # --------------------------
 with open("/shared/feature_list.json", "w") as f:
     json.dump(list(X_resampled.columns), f)
 print("🧾 Saved feature list to /shared/feature_list.json")
 
 # --------------------------
-# 🔹 Generate explanation map from training data
+# 🔹 Generate explanation_map from COMMENT field
 # --------------------------
 try:
-    from utils.reasoning_llm import generate_reasoning_map
-    training_rows = full_data.to_dict(orient="records")
-    generate_reasoning_map(training_rows)
+    explanation_map = {}
+    for row in raw_anomalies:
+        numeric_key = tuple(round(float(row[k]), 3) for k in row if isinstance(row[k], (int, float)))
+        comment = row.get("COMMENT") or row.get("comment") or "No COMMENT"
+        explanation_map[str(numeric_key)] = str(comment)
+    with open(EXPLANATION_MAP_PATH, "w") as f:
+        json.dump(explanation_map, f, indent=2)
+    print("🗂️ Saved explanation_map.json from COMMENT field.")
 except Exception as e:
     print("⚠️ Failed to generate explanation map:", e)
